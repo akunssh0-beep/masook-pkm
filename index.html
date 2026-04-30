@@ -17,8 +17,10 @@
         :root { --pkm-primary: #1e40af; --pkm-accent: #3b82f6; --pkm-success: #10b981; }
         body { font-family: 'Plus Jakarta Sans', sans-serif; background: #f8fafc; height: 100vh; overflow: hidden; margin: 0; }
         
-        .page { display: none; height: 100vh; overflow-y: auto; scroll-behavior: smooth; padding-bottom: 100px; }
-        .page.active { display: block; animation: pageIn 0.3s ease-out; }
+        /* Base Page Style */
+        .page { display: none; height: 100vh; overflow-y: auto; scroll-behavior: smooth; padding-bottom: 100px; position: fixed; inset: 0; width: 100%; }
+        .page.active { display: block; animation: pageIn 0.3s ease-out; z-index: 10; }
+        
         @keyframes pageIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
         .ios-blur { background: rgba(255, 255, 255, 0.75); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.4); }
@@ -47,7 +49,7 @@
         <p id="loader-text" class="text-[10px] font-black uppercase tracking-[0.2em]">Memproses Data...</p>
     </div>
 
-    <div id="login-page" class="page active bg-slate-50 flex items-center justify-center p-6">
+    <div id="login-page" class="page bg-slate-50 flex items-center justify-center p-6">
         <div class="w-full max-w-sm">
             <div class="text-center mb-10">
                 <h1 class="text-4xl font-black text-blue-800 tracking-tighter shimmer">MASOOK</h1>
@@ -262,23 +264,35 @@
         function resetLogoutTimer() {
             if (!currentUser) return;
             clearTimeout(logoutTimer);
-            // Otomatis logout setelah 5 menit tidak ada aktivitas (300.000 ms)
             logoutTimer = setTimeout(() => {
                 handleLogout();
                 alert("Sesi Anda telah berakhir demi keamanan. Silakan login kembali.");
             }, 300000); 
         }
 
-        // Pantau aktivitas user untuk mereset timer
         ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'].forEach(evt => {
             window.addEventListener(evt, resetLogoutTimer, true);
         });
 
-        // -- NAVIGATION --
+        // -- NAVIGATION (UPDATED FOR FIX STICKY PAGES) --
         function navigateTo(pageId) {
-            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-            document.getElementById(pageId).classList.add('active');
+            // 1. Ambil semua elemen dengan class 'page'
+            const allPages = document.querySelectorAll('.page');
             
+            // 2. Sembunyikan semua halaman secara total
+            allPages.forEach(p => {
+                p.classList.remove('active');
+                p.style.display = 'none'; // Paksa sembunyi di level inline
+            });
+
+            // 3. Tampilkan halaman tujuan
+            const targetPage = document.getElementById(pageId);
+            if (targetPage) {
+                targetPage.classList.add('active');
+                targetPage.style.display = (pageId === 'login-page') ? 'flex' : 'block'; // Sesuaikan display flex untuk login
+            }
+            
+            // 4. Pengaturan Bottom Nav agar tidak menutupi kamera
             const bottomNav = document.getElementById('bottom-nav');
             if (pageId === 'login-page' || pageId === 'face-page') {
                 bottomNav.classList.add('hidden');
@@ -286,16 +300,19 @@
                 bottomNav.classList.remove('hidden');
             }
 
-            if (webcamStream) {
+            // 5. Manajemen Kamera
+            if (webcamStream && pageId !== 'face-page') {
                 webcamStream.getTracks().forEach(track => track.stop());
                 webcamStream = null;
             }
 
+            // Update UI Icons Active State
             document.querySelectorAll('.nav-item').forEach(btn => {
                 btn.classList.replace('text-blue-600', 'text-slate-400');
                 if (btn.getAttribute('data-page') === pageId) btn.classList.replace('text-slate-400', 'text-blue-600');
             });
 
+            // Trigger Page Specific Actions
             if (pageId === 'face-page') startFaceAuth();
             if (pageId === 'riwayat-page') loadUserHistory();
             if (pageId === 'home-page') syncStats();
@@ -303,7 +320,8 @@
 
         // -- LOGIN LOGIC: SEARCH BY PIN ONLY --
         function handleLogin() {
-            const pin = document.getElementById('login-pin').value;
+            const pinField = document.getElementById('login-pin');
+            const pin = pinField.value;
             if (!pin) return toast("Masukkan PIN!");
 
             showLoader("Otentikasi...");
@@ -322,12 +340,12 @@
                     toast("Login Berhasil!");
                     confetti();
                     updateUI();
+                    pinField.value = "";
                     navigateTo('home-page');
-                    resetLogoutTimer(); // Mulai timer sesi
-                    document.getElementById('login-pin').value = "";
+                    resetLogoutTimer();
                 } else {
                     toast("PIN Tidak Ditemukan!");
-                    document.getElementById('login-pin').value = "";
+                    pinField.value = "";
                 }
             };
         }
@@ -354,13 +372,14 @@
 
         function updateUI() {
             if (!currentUser) return;
+            const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser.nama)}&background=0D8ABC&color=fff`;
             document.getElementById('user-name-display').innerText = currentUser.nama;
             document.getElementById('profile-name').innerText = currentUser.nama;
             document.getElementById('profile-nip').innerText = "NIP: " + currentUser.nip;
             document.getElementById('profile-jabatan').innerText = currentUser.jabatan;
             document.getElementById('profile-unit').innerText = currentUser.unit;
-            document.getElementById('user-avatar').src = `https://ui-avatars.com/api/?name=${currentUser.nama}&background=0D8ABC&color=fff`;
-            document.getElementById('profile-img-large').src = `https://ui-avatars.com/api/?name=${currentUser.nama}&background=0D8ABC&color=fff`;
+            document.getElementById('user-avatar').src = avatarUrl;
+            document.getElementById('profile-img-large').src = avatarUrl;
         }
 
         // -- FACE SCANNER LOGIC --
@@ -368,13 +387,19 @@
             if (!isModelLoaded) {
                 showLoader("Memuat AI...");
                 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model/';
-                await Promise.all([
-                    faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
-                    faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-                    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
-                ]);
-                isModelLoaded = true;
-                hideLoader();
+                try {
+                    await Promise.all([
+                        faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+                        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+                        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+                    ]);
+                    isModelLoaded = true;
+                    hideLoader();
+                } catch (e) {
+                    hideLoader();
+                    toast("Gagal Memuat Model AI");
+                    return navigateTo('home-page');
+                }
             }
 
             const video = document.getElementById('webcam');
@@ -388,7 +413,10 @@
                 
                 let scanCount = 0;
                 const recInterval = setInterval(async () => {
-                    if (!webcamStream) return clearInterval(recInterval);
+                    if (!webcamStream || !document.getElementById('face-page').classList.contains('active')) {
+                        clearInterval(recInterval);
+                        return;
+                    }
                     const detections = await faceapi.detectSingleFace(video).withFaceLandmarks().withFaceDescriptor();
                     
                     if (detections) {
@@ -440,10 +468,7 @@
                         mode: "no-cors",
                         body: JSON.stringify({ action: "save_absen", ...log })
                     });
-                    toast("Presensi Berhasil!");
-                } catch (e) {
-                    // Proteksi Privasi: Console log data staff dihapus
-                }
+                } catch (e) {}
 
                 hideLoader();
                 confetti();
@@ -498,10 +523,13 @@
                 document.getElementById('stat-hadir').innerText = [...new Set(myLogs.map(l => l.tanggal))].length;
                 const today = new Date().toLocaleDateString('id-ID');
                 const hasToday = myLogs.find(l => l.tanggal === today);
+                const badge = document.getElementById('attendance-status');
                 if (hasToday) {
-                    const badge = document.getElementById('attendance-status');
                     badge.innerText = "Sudah Absen";
                     badge.className = "inline-block px-6 py-2 rounded-full bg-emerald-100 text-emerald-600 text-[10px] font-black uppercase mb-6";
+                } else {
+                    badge.innerText = "Belum Absen";
+                    badge.className = "inline-block px-6 py-2 rounded-full bg-amber-100 text-amber-600 text-[10px] font-black uppercase mb-6";
                 }
             };
         }
@@ -509,14 +537,17 @@
         // -- SYSTEM UTILS --
         function updateClock() {
             const now = new Date();
-            document.getElementById('clock').innerText = now.toLocaleTimeString('id-ID', { hour12: false }).replace(/\./g, ':');
-            document.getElementById('date').innerText = now.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+            const timeStr = now.toLocaleTimeString('id-ID', { hour12: false }).replace(/\./g, ':');
+            const dateStr = now.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+            if(document.getElementById('clock')) document.getElementById('clock').innerText = timeStr;
+            if(document.getElementById('date')) document.getElementById('date').innerText = dateStr;
         }
 
-        // FALLBACK LOKASI: REFRESH GPS MANUAL
         function refreshGPS() {
-            document.getElementById('gps-label').innerText = "Mencari Lokasi...";
-            document.getElementById('gps-indicator').className = "w-2.5 h-2.5 bg-slate-300 rounded-full";
+            const label = document.getElementById('gps-label');
+            const indicator = document.getElementById('gps-indicator');
+            label.innerText = "Mencari Lokasi...";
+            indicator.className = "w-2.5 h-2.5 bg-slate-300 rounded-full";
             trackGPS();
             toast("Mereset Koordinat GPS...");
         }
@@ -563,11 +594,8 @@
                         const store = tx.objectStore("staff");
                         store.clear();
                         cloudData.data.forEach(s => store.put(s));
-                        // Proteksi Privasi: Console log cloudData dihapus
                     }
-                } catch (e) { 
-                    // Proteksi Privasi: Console log cloudData dihapus
-                }
+                } catch (e) {}
             }
         };
     </script>
